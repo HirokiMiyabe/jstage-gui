@@ -30,6 +30,45 @@ def _pick_ja_or_first(entry, tag_path: str):
     any_ = _get_texts(entry, tag_path)
     return any_[0] if any_ else None
 
+def _texts_local(entry, xpath_expr: str) -> list[str]:
+    """namespacesを無視して文字列を回収する（text()/@attr どちらでもOK）"""
+    vals = entry.xpath(xpath_expr)
+    out = []
+    for v in vals:
+        if isinstance(v, str):
+            t = v.strip()
+            if t:
+                out.append(t)
+        else:
+            t = getattr(v, "text", None)
+            if t and t.strip():
+                out.append(t.strip())
+    return out
+
+def _first_local(entry, xpath_expr: str):
+    vals = _texts_local(entry, xpath_expr)
+    return vals[0] if vals else None
+
+def _pick_ja_or_first_tag_local(entry, tag: str) -> str | None:
+    """
+    <tag><ja>TEXT</ja></tag> を優先し、なければ <tag> 配下の最初のテキストを返す
+    tag例: article_title, material_title, article_link
+    """
+    ja = _first_local(entry, f"./*[local-name()='{tag}']/*[local-name()='ja']/text()")
+    if ja:
+        return ja
+    any_text = _first_local(entry, f"./*[local-name()='{tag}']//text()")
+    return any_text
+
+def _authors_local(entry) -> list[str]:
+    """<author><ja><name>..</name></ja></author> を優先し、ダメなら <author><name>..</name> を見る"""
+    ja = _texts_local(entry, "./*[local-name()='author']/*[local-name()='ja']/*[local-name()='name']/text()")
+    if ja:
+        return ja
+    return _texts_local(entry, "./*[local-name()='author']/*[local-name()='name']/text()")
+
+
+
 def fetch_jstage_data(
     target_word: str,
     year: int,
@@ -62,24 +101,25 @@ def fetch_jstage_data(
                 break
 
             for entry in entries:
-                ja_authors = _get_texts(entry, "atom:author/atom:name[@xml:lang='ja']")
-                authors = ja_authors or _get_texts(entry, "atom:author/atom:name")
+                authors = _authors_local(entry)
 
                 all_data.append({
-                    # 既存
                     "author": authors,
-                    "article_title": _pick_ja_or_first(entry, "atom:article_title"),
-                    "material_title": _pick_ja_or_first(entry, "atom:material_title"),
-                    "article_link": _pick_ja_or_first(entry, "atom:article_link"),
+                    "article_title": _pick_ja_or_first_tag_local(entry, "article_title"),
+                    "material_title": _pick_ja_or_first_tag_local(entry, "material_title"),
+                    "article_link": _pick_ja_or_first_tag_local(entry, "article_link"),
+
                     "pubyear": _get_first(entry, "atom:pubyear"),
                     "doi": _get_first(entry, "prism:doi"),
 
                     "volume": _get_first(entry, "prism:volume"),
-                    "cdvols": _get_first(entry, "cdvols"),
+                    "cdvols": _first_local(entry, "./*[local-name()='cdvols']/text()"),
                     "number": _get_first(entry, "prism:number"),
                     "starting_page": _get_first(entry, "prism:startingPage"),
                     "ending_page": _get_first(entry, "prism:endingPage"),
                 })
+
+                
 
                 if len(all_data) >= max_records:
                     break
@@ -93,13 +133,15 @@ def fetch_jstage_data(
 
             time.sleep(sleep)
 
+
     df = pl.DataFrame(all_data)
 
     if not df.is_empty():
         df = df.with_columns([
+            # ★これを追加：authorを必ず list[str] に固定
+            pl.col("author").cast(pl.List(pl.Utf8), strict=False),
             pl.col("pubyear").cast(pl.Int32, strict=False),
             pl.col("starting_page").cast(pl.Int32, strict=False),
             pl.col("ending_page").cast(pl.Int32, strict=False),
         ])
-
     return df, total_results
