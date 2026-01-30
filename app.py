@@ -101,8 +101,8 @@ with st.sidebar:
 
     autosave_formats = st.multiselect(
         "data/ に自動保存する形式",
-        options=["Parquet", "CSV", "JSON"],
-        default=["Parquet"],
+        options=["CSV", "JSON", "Parquet"],
+        default=["CSV"],
     )
 
     csv_sep = st.text_input("CSVの著者区切り", value="; ")
